@@ -1,0 +1,17 @@
+{
+  "buildCommand": "npm install",
+  "outputDirectory": ".",
+  "devCommand": "node signal_gateway.js",
+  "functions": {
+    "signal_gateway.js": {
+      "memory": 1024,
+      "maxDuration": 60
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/signal_gateway.js"
+    }
+  ]
+}
