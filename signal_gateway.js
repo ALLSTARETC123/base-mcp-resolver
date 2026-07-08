@@ -11,16 +11,13 @@ if (fs.existsSync(".env")) {
   });
 }
 
-const PORT = 3000;
-const walletAddress = process.env.AGENT_SIGNER_ADDRESS;
-const rpcUrl = process.env.BASE_RPC_URL;
-
-if (!walletAddress || !rpcUrl) {
-  console.error("[-] Initialization Error: Missing AGENT_SIGNER_ADDRESS or BASE_RPC_URL inside your .env configuration.");
-  process.exit(1);
-}
+const PORT = 3001;
+const walletAddress = process.env.AGENT_SIGNER_ADDRESS || "0x0000000000000000000000000000000000000000";
+const rpcUrl = process.env.BASE_RPC_URL || "https://mainnet.base.org";
 
 const server = http.createServer(async (req, res) => {
+  console.log(`\n[!] INCOMING EXTERNAL PAYLOAD: ${req.method} request intercepted.`);
+
   res.setHeader("Content-Type", "application/json");
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
@@ -31,6 +28,15 @@ const server = http.createServer(async (req, res) => {
     return res.end();
   }
 
+  if (req.method === "GET" && req.url === "/.well-known/mcp/server-card.json") {
+    res.writeHead(200);
+    return res.end(JSON.stringify({
+      mcpId: "base-mcp-resolver",
+      name: "Agentik Signal Service (Free Tier)",
+      version: "2.0.0"
+    }));
+  }
+
   if (req.method === "POST") {
     let body = "";
     req.on("data", chunk => { body += chunk; });
@@ -39,57 +45,57 @@ const server = http.createServer(async (req, res) => {
         const jsonRpcRequest = JSON.parse(body);
         const { method, params, id } = jsonRpcRequest;
 
-        if (method === "tools/list") {
-          const response = {
+        if (method === "initialize") {
+          res.writeHead(200);
+          return res.end(JSON.stringify({
             jsonrpc: "2.0",
             id: id,
             result: {
-              tools: [
-                {
-                  name: "resolve_transaction",
-                  description: "Queries the Base blockchain via RPC to fetch authentic execution data for a specific transaction hash.",
-                  inputSchema: {
-                    type: "object",
-                    properties: {
-                      txHash: {
-                        type: "string",
-                        description: "The 66-character transaction hash (beginning with 0x) to resolve on-chain."
-                      }
-                    },
-                    required: ["txHash"]
-                  }
-                }
-              ]
+              protocolVersion: "2024-11-05",
+              capabilities: { tools: {} },
+              serverInfo: { name: "base-mcp-resolver", version: "2.0.0" }
             }
-          };
-          res.writeHead(200);
-          return res.end(JSON.stringify(response));
+          }));
         }
 
-        if (method === "tools/call") {
-          const toolName = params?.name;
-          const args = params?.arguments;
+        if (method === "tools/list") {
+          res.writeHead(200);
+          return res.end(JSON.stringify({
+            jsonrpc: "2.0",
+            id: id,
+            result: {
+              tools: [{
+                name: "resolve_transaction",
+                description: "Queries the Base blockchain via RPC to fetch authentic execution data. Free signal feed.",
+                inputSchema: {
+                  type: "object",
+                  properties: { txHash: { type: "string" } },
+                  required: ["txHash"]
+                }
+              }]
+            }
+          }));
+        }
 
-          if (toolName === "resolve_transaction" && args?.txHash) {
-            const provider = new ethers.JsonRpcProvider(rpcUrl);
-            const tx = await provider.getTransaction(args.txHash);
+        if (method === "tools/call" && params?.name === "resolve_transaction" && params?.arguments?.txHash) {
+          const provider = new ethers.JsonRpcProvider(rpcUrl);
+
+          try {
+            const tx = await provider.getTransaction(params.arguments.txHash);
 
             if (!tx) {
               res.writeHead(200);
               return res.end(JSON.stringify({
                 jsonrpc: "2.0",
                 id: id,
-                result: {
-                  content: [{ type: "text", text: `Transaction ${args.txHash} not found on the Base network.` }],
-                  isError: true
-                }
+                result: { content: [{ type: "text", text: `Transaction not found.` }], isError: true }
               }));
             }
 
             const resolutionText = JSON.stringify({
               status: "SUCCESS",
               serviceAddress: walletAddress,
-              transactionHash: args.txHash,
+              transactionHash: params.arguments.txHash,
               blockNumber: tx.blockNumber,
               from: tx.from,
               to: tx.to,
@@ -101,63 +107,32 @@ const server = http.createServer(async (req, res) => {
             return res.end(JSON.stringify({
               jsonrpc: "2.0",
               id: id,
-              result: {
-                content: [{ type: "text", text: resolutionText }]
-              }
+              result: { content: [{ type: "text", text: resolutionText }] }
+            }));
+          } catch (rpcErr) {
+            res.writeHead(200);
+            return res.end(JSON.stringify({
+              jsonrpc: "2.0",
+              id: id,
+              result: { content: [{ type: "text", text: `RPC error: ${rpcErr.message}` }], isError: true }
             }));
           }
         }
 
         res.writeHead(400);
-        return res.end(JSON.stringify({
-          jsonrpc: "2.0",
-          id: id || null,
-          error: { code: -32601, message: "Method not found" }
-        }));
-
+        return res.end(JSON.stringify({ jsonrpc: "2.0", id: id || null, error: { code: -32601, message: "Method not found" } }));
       } catch (err) {
         res.writeHead(500);
-        return res.end(JSON.stringify({
-          jsonrpc: "2.0",
-          id: null,
-          error: { code: -32603, message: err.message }
-        }));
+        return res.end(JSON.stringify({ jsonrpc: "2.0", error: { code: -32700, message: "Parse error" } }));
       }
     });
     return;
   }
 
-  const urlParts = req.url.split("/");
-  if (req.method === "GET" && urlParts[1] === "resolve" && urlParts[2]) {
-    try {
-      const txHash = urlParts[2];
-      const provider = new ethers.JsonRpcProvider(rpcUrl);
-      const tx = await provider.getTransaction(txHash);
-      
-      if (!tx) {
-        res.writeHead(404);
-        return res.end(JSON.stringify({ error: "Transaction not found" }));
-      }
-
-      res.writeHead(200);
-      return res.end(JSON.stringify({
-        status: "SUCCESS",
-        serviceAddress: walletAddress,
-        transactionHash: txHash,
-        blockNumber: tx.blockNumber,
-        timestamp: new Date().toISOString()
-      }));
-    } catch (error) {
-      res.writeHead(500);
-      return res.end(JSON.stringify({ error: error.message }));
-    }
-  }
-
   res.writeHead(404);
-  res.end(JSON.stringify({ error: "Not Found" }));
+  res.end();
 });
 
 server.listen(PORT, () => {
-  console.log(`[+] MCP Signal Gateway Server active on port ${PORT}.`);
-  console.log(`[+] Accepting standard Model Context Protocol JSON-RPC payloads via HTTP POST.`);
+  console.log(`[+] Agentik Signal Gateway Server active on port ${PORT}. Free signals, zero payment friction.`);
 });
