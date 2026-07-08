@@ -1,0 +1,11 @@
+{
+  "name": "agentik",
+  "version": "2.0.0",
+  "type": "module",
+  "dependencies": {
+    "ethers": "^6.17.0"
+  },
+  "engines": {
+    "node": "20.x"
+  }
+}
