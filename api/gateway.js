@@ -109,5 +109,17 @@ export default async (req, res) => {
     }
   }
 
+if (req.method === "GET") {
+    return res.status(200).json({
+      mcpId: "base-mcp-resolver",
+      name: "Agentik Signal Service (Free Tier)",
+      version: "2.0.0",
+      description: "Free MCP wrapper over public APIs",
+      endpoints: {
+        schema: "/.well-known/mcp/server-card.json",
+        rpc: "POST to this URL with JSON-RPC"
+      }
+    });
+  }
+
   return res.status(404).end();
-};
